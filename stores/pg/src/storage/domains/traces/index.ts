@@ -94,7 +94,7 @@ export class TracesPG extends TracesStorage {
 
     try {
       const countResult = await this.client.oneOrNone<{ count: string }>(
-        `SELECT COUNT(*) FROM ${getTableName({ indexName: TABLE_TRACES, schemaName: getSchemaName(this.schema) })} ${whereClause}`,
+        `SELECT COUNT(*) FROM ${this.operations.resolveTableName(TABLE_TRACES)} ${whereClause}`,
         queryParams,
       );
       const total = Number(countResult?.count ?? 0);
@@ -110,7 +110,7 @@ export class TracesPG extends TracesStorage {
       }
 
       const dataResult = await this.client.manyOrNone<Record<string, any>>(
-        `SELECT * FROM ${getTableName({ indexName: TABLE_TRACES, schemaName: getSchemaName(this.schema) })} ${whereClause} ORDER BY "startTime" DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
+        `SELECT * FROM ${this.operations.resolveTableName(TABLE_TRACES)} ${whereClause} ORDER BY "startTime" DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
         [...queryParams, perPage, currentOffset],
       );
 

@@ -27,22 +27,40 @@ export type { CreateIndexOptions, IndexInfo, StorageIndexStats };
 export class StoreOperationsPG extends StoreOperations {
   public client: IDatabase<{}>;
   public schemaName?: string;
+  public tableMap: Partial<Record<TABLE_NAMES, string>>;
   private setupSchemaPromise: Promise<void> | null = null;
   private schemaSetupComplete: boolean | undefined = undefined;
 
-  constructor({ client, schemaName }: { client: IDatabase<{}>; schemaName?: string }) {
+  constructor({
+    client,
+    schemaName,
+    tableMap = {},
+  }: {
+    client: IDatabase<{}>;
+    schemaName?: string;
+    tableMap?: Partial<Record<TABLE_NAMES, string>>;
+  }) {
     super();
     this.client = client;
     this.schemaName = schemaName;
+    this.tableMap = tableMap;
+  }
+
+  public resolveTableName(indexName: TABLE_NAMES): string {
+    const actualTableName = this.tableMap[indexName] || indexName;
+    return getTableName({ indexName: actualTableName, schemaName: getSchemaName(this.schemaName) });
   }
 
   async hasColumn(table: string, column: string): Promise<boolean> {
     // Use this.schema to scope the check
     const schema = this.schemaName || 'public';
 
+    // Resolve the actual table name using the tableMap
+    const actualTableName = this.tableMap[table as TABLE_NAMES] || table;
+
     const result = await this.client.oneOrNone(
       `SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND (column_name = $3 OR column_name = $4)`,
-      [schema, table, column, column.toLowerCase()],
+      [schema, actualTableName, column, column.toLowerCase()],
     );
 
     return !!result;
@@ -154,7 +172,7 @@ export class StoreOperationsPG extends StoreOperations {
       const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
 
       await this.client.none(
-        `INSERT INTO ${getTableName({ indexName: tableName, schemaName })} (${columns.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders})`,
+        `INSERT INTO ${this.resolveTableName(tableName)} (${columns.map(c => `"${c}"`).join(', ')}) VALUES (${placeholders})`,
         values,
       );
     } catch (error) {
@@ -174,8 +192,7 @@ export class StoreOperationsPG extends StoreOperations {
 
   async clearTable({ tableName }: { tableName: TABLE_NAMES }): Promise<void> {
     try {
-      const schemaName = getSchemaName(this.schemaName);
-      const tableNameWithSchema = getTableName({ indexName: tableName, schemaName });
+      const tableNameWithSchema = this.resolveTableName(tableName);
       await this.client.none(`TRUNCATE TABLE ${tableNameWithSchema} CASCADE`);
     } catch (error) {
       throw new MastraError(
@@ -239,8 +256,9 @@ export class StoreOperationsPG extends StoreOperations {
 
       // Constraints are global to a database, ensure schemas do not conflict with each other
       const constraintPrefix = this.schemaName ? `${this.schemaName}_` : '';
+      const fullTableName = this.resolveTableName(tableName);
       const sql = `
-            CREATE TABLE IF NOT EXISTS ${getTableName({ indexName: tableName, schemaName: getSchemaName(this.schemaName) })} (
+            CREATE TABLE IF NOT EXISTS ${fullTableName} (
               ${finalColumns}
             );
             ${
@@ -252,7 +270,7 @@ export class StoreOperationsPG extends StoreOperations {
               ) AND NOT EXISTS (
                 SELECT 1 FROM pg_indexes WHERE indexname = '${constraintPrefix}mastra_workflow_snapshot_workflow_name_run_id_key'
               ) THEN
-                ALTER TABLE ${getTableName({ indexName: tableName, schemaName: getSchemaName(this.schemaName) })}
+                ALTER TABLE ${fullTableName}
                 ADD CONSTRAINT ${constraintPrefix}mastra_workflow_snapshot_workflow_name_run_id_key
                 UNIQUE (workflow_name, run_id);
               END IF;
@@ -293,7 +311,7 @@ export class StoreOperationsPG extends StoreOperations {
    * Set up timestamp triggers for a table to automatically manage createdAt/updatedAt
    */
   private async setupTimestampTriggers(tableName: TABLE_NAMES): Promise<void> {
-    const fullTableName = getTableName({ indexName: tableName, schemaName: getSchemaName(this.schemaName) });
+    const fullTableName = this.resolveTableName(tableName);
 
     try {
       const triggerSQL = `
@@ -350,7 +368,7 @@ export class StoreOperationsPG extends StoreOperations {
     schema: Record<string, StorageColumn>;
     ifNotExists: string[];
   }): Promise<void> {
-    const fullTableName = getTableName({ indexName: tableName, schemaName: getSchemaName(this.schemaName) });
+    const fullTableName = this.resolveTableName(tableName);
 
     try {
       for (const columnName of ifNotExists) {
@@ -396,7 +414,7 @@ export class StoreOperationsPG extends StoreOperations {
       const values = keyEntries.map(([_, value]) => value);
 
       const result = await this.client.oneOrNone<R>(
-        `SELECT * FROM ${getTableName({ indexName: tableName, schemaName: getSchemaName(this.schemaName) })} WHERE ${conditions} ORDER BY "createdAt" DESC LIMIT 1`,
+        `SELECT * FROM ${this.resolveTableName(tableName)} WHERE ${conditions} ORDER BY "createdAt" DESC LIMIT 1`,
         values,
       );
 
@@ -455,8 +473,7 @@ export class StoreOperationsPG extends StoreOperations {
 
   async dropTable({ tableName }: { tableName: TABLE_NAMES }): Promise<void> {
     try {
-      const schemaName = getSchemaName(this.schemaName);
-      const tableNameWithSchema = getTableName({ indexName: tableName, schemaName });
+      const tableNameWithSchema = this.resolveTableName(tableName);
       await this.client.none(`DROP TABLE IF EXISTS ${tableNameWithSchema}`);
     } catch (error) {
       throw new MastraError(
@@ -492,10 +509,7 @@ export class StoreOperationsPG extends StoreOperations {
       } = options;
 
       const schemaName = this.schemaName || 'public';
-      const fullTableName = getTableName({
-        indexName: table as TABLE_NAMES,
-        schemaName: getSchemaName(this.schemaName),
-      });
+      const fullTableName = this.resolveTableName(table as TABLE_NAMES);
 
       // Check if index already exists
       const indexExists = await this.client.oneOrNone(
@@ -698,55 +712,60 @@ export class StoreOperationsPG extends StoreOperations {
    */
   protected getAutomaticIndexDefinitions(): CreateIndexOptions[] {
     const schemaPrefix = this.schemaName ? `${this.schemaName}_` : '';
+    const resolveIndexName = (tableName: TABLE_NAMES) => {
+      const actualTableName = this.tableMap[tableName] || tableName;
+      return actualTableName.replace(/^mastra_/, '');
+    };
+
     return [
       // Composite index for threads (filter + sort)
       {
-        name: `${schemaPrefix}mastra_threads_resourceid_createdat_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_THREADS)}_resourceid_createdat_idx`,
         table: TABLE_THREADS,
         columns: ['resourceId', 'createdAt DESC'],
       },
       // Composite index for messages (filter + sort)
       {
-        name: `${schemaPrefix}mastra_messages_thread_id_createdat_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_MESSAGES)}_thread_id_createdat_idx`,
         table: TABLE_MESSAGES,
         columns: ['thread_id', 'createdAt DESC'],
       },
       // Composite index for traces (filter + sort)
       {
-        name: `${schemaPrefix}mastra_traces_name_starttime_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_TRACES)}_name_starttime_idx`,
         table: TABLE_TRACES,
         columns: ['name', 'startTime DESC'],
       },
       // Composite index for evals (filter + sort)
       {
-        name: `${schemaPrefix}mastra_evals_agent_name_created_at_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_EVALS)}_agent_name_created_at_idx`,
         table: TABLE_EVALS,
         columns: ['agent_name', 'created_at DESC'],
       },
       // Composite index for scores (filter + sort)
       {
-        name: `${schemaPrefix}mastra_scores_trace_id_span_id_created_at_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_SCORERS)}_trace_id_span_id_created_at_idx`,
         table: TABLE_SCORERS,
         columns: ['traceId', 'spanId', 'createdAt DESC'],
       },
       // AI Spans indexes for optimal trace querying
       {
-        name: `${schemaPrefix}mastra_ai_spans_traceid_startedat_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_AI_SPANS)}_traceid_startedat_idx`,
         table: TABLE_AI_SPANS,
         columns: ['traceId', 'startedAt DESC'],
       },
       {
-        name: `${schemaPrefix}mastra_ai_spans_parentspanid_startedat_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_AI_SPANS)}_parentspanid_startedat_idx`,
         table: TABLE_AI_SPANS,
         columns: ['parentSpanId', 'startedAt DESC'],
       },
       {
-        name: `${schemaPrefix}mastra_ai_spans_name_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_AI_SPANS)}_name_idx`,
         table: TABLE_AI_SPANS,
         columns: ['name'],
       },
       {
-        name: `${schemaPrefix}mastra_ai_spans_spantype_startedat_idx`,
+        name: `${schemaPrefix}${resolveIndexName(TABLE_AI_SPANS)}_spantype_startedat_idx`,
         table: TABLE_AI_SPANS,
         columns: ['spanType', 'startedAt DESC'],
       },
@@ -888,10 +907,7 @@ export class StoreOperationsPG extends StoreOperations {
         whereValues.push(this.prepareValue(value));
       });
 
-      const tableName_ = getTableName({
-        indexName: tableName,
-        schemaName: getSchemaName(this.schemaName),
-      });
+      const tableName_ = this.resolveTableName(tableName);
 
       const sql = `UPDATE ${tableName_} SET ${setColumns.join(', ')} WHERE ${whereConditions.join(' AND ')}`;
       const values = [...setValues, ...whereValues];
@@ -957,10 +973,7 @@ export class StoreOperationsPG extends StoreOperations {
         return;
       }
 
-      const tableName_ = getTableName({
-        indexName: tableName,
-        schemaName: getSchemaName(this.schemaName),
-      });
+      const tableName_ = this.resolveTableName(tableName);
 
       await this.client.tx(async t => {
         for (const keySet of keys) {

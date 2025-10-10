@@ -41,7 +41,7 @@ export class MemoryPG extends MemoryStorage {
 
   async getThreadById({ threadId }: { threadId: string }): Promise<StorageThreadType | null> {
     try {
-      const tableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_THREADS);
 
       const thread = await this.client.oneOrNone<StorageThreadType & { createdAtZ: Date; updatedAtZ: Date }>(
         `SELECT * FROM ${tableName} WHERE id = $1`,
@@ -84,7 +84,7 @@ export class MemoryPG extends MemoryStorage {
     const sortDirection = this.castThreadSortDirection(args.sortDirection);
 
     try {
-      const tableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_THREADS);
       const baseQuery = `FROM ${tableName} WHERE "resourceId" = $1`;
       const queryParams: any[] = [resourceId];
 
@@ -113,7 +113,7 @@ export class MemoryPG extends MemoryStorage {
     const orderBy = this.castThreadOrderBy(args.orderBy);
     const sortDirection = this.castThreadSortDirection(args.sortDirection);
     try {
-      const tableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_THREADS);
       const baseQuery = `FROM ${tableName} WHERE "resourceId" = $1`;
       const queryParams: any[] = [resourceId];
       const perPage = perPageInput !== undefined ? perPageInput : 100;
@@ -171,7 +171,7 @@ export class MemoryPG extends MemoryStorage {
 
   async saveThread({ thread }: { thread: StorageThreadType }): Promise<StorageThreadType> {
     try {
-      const tableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_THREADS);
       await this.client.none(
         `INSERT INTO ${tableName} (
           id,
@@ -228,7 +228,7 @@ export class MemoryPG extends MemoryStorage {
     title: string;
     metadata: Record<string, unknown>;
   }): Promise<StorageThreadType> {
-    const threadTableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+    const threadTableName = this.operations.resolveTableName(TABLE_THREADS);
     // First get the existing thread to merge metadata
     const existingThread = await this.getThreadById({ threadId: id });
     if (!existingThread) {
@@ -290,8 +290,8 @@ export class MemoryPG extends MemoryStorage {
 
   async deleteThread({ threadId }: { threadId: string }): Promise<void> {
     try {
-      const tableName = getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) });
-      const threadTableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_MESSAGES);
+      const threadTableName = this.operations.resolveTableName(TABLE_THREADS);
       await this.client.tx(async t => {
         // First delete all messages associated with this thread
         await t.none(`DELETE FROM ${tableName} WHERE thread_id = $1`, [threadId]);
@@ -331,7 +331,7 @@ export class MemoryPG extends MemoryStorage {
     const unionQueries: string[] = [];
     const params: any[] = [];
     let paramIdx = 1;
-    const tableName = getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) });
+    const tableName = this.operations.resolveTableName(TABLE_MESSAGES);
 
     for (const inc of include) {
       const { id, withPreviousMessages = 0, withNextMessages = 0 } = inc;
@@ -432,7 +432,7 @@ export class MemoryPG extends MemoryStorage {
       }
 
       const excludeIds = rows.map(m => m.id);
-      const tableName = getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_MESSAGES);
       const excludeIdsParam = excludeIds.map((_, idx) => `$${idx + 2}`).join(', ');
       let query = `${selectStatement} FROM ${tableName} WHERE thread_id = $1 
         ${excludeIds.length ? `AND id NOT IN (${excludeIdsParam})` : ''}
@@ -510,7 +510,7 @@ export class MemoryPG extends MemoryStorage {
     const selectStatement = `SELECT id, content, role, type, "createdAt", thread_id AS "threadId", "resourceId"`;
 
     try {
-      const tableName = getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_MESSAGES);
       const query = `
         ${selectStatement} FROM ${tableName} 
         WHERE id IN (${messageIds.map((_, i) => `$${i + 1}`).join(', ')})
@@ -582,7 +582,7 @@ export class MemoryPG extends MemoryStorage {
       }
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-      const tableName = getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_MESSAGES);
       const countQuery = `SELECT COUNT(*) FROM ${tableName} ${whereClause}`;
       const countResult = await this.client.one(countQuery, queryParams);
       const total = parseInt(countResult.count, 10);
@@ -683,7 +683,7 @@ export class MemoryPG extends MemoryStorage {
     }
 
     try {
-      const tableName = getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) });
+      const tableName = this.operations.resolveTableName(TABLE_MESSAGES);
       await this.client.tx(async t => {
         // Execute message inserts and thread update in parallel for better performance
         const messageInserts = messages.map(message => {
@@ -719,7 +719,7 @@ export class MemoryPG extends MemoryStorage {
           );
         });
 
-        const threadTableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+        const threadTableName = this.operations.resolveTableName(TABLE_THREADS);
         const threadUpdate = t.none(
           `UPDATE ${threadTableName} 
                         SET 
@@ -781,7 +781,7 @@ export class MemoryPG extends MemoryStorage {
 
     const messageIds = messages.map(m => m.id);
 
-    const selectQuery = `SELECT id, content, role, type, "createdAt", thread_id AS "threadId", "resourceId" FROM ${getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) })} WHERE id IN ($1:list)`;
+    const selectQuery = `SELECT id, content, role, type, "createdAt", thread_id AS "threadId", "resourceId" FROM ${this.operations.resolveTableName(TABLE_MESSAGES)} WHERE id IN ($1:list)`;
 
     const existingMessagesDb = await this.client.manyOrNone(selectQuery, [messageIds]);
 
@@ -857,7 +857,7 @@ export class MemoryPG extends MemoryStorage {
 
         if (setClauses.length > 0) {
           values.push(id);
-          const sql = `UPDATE ${getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) })} SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`;
+          const sql = `UPDATE ${this.operations.resolveTableName(TABLE_MESSAGES)} SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`;
           queries.push(t.none(sql, values));
         }
       }
@@ -865,7 +865,7 @@ export class MemoryPG extends MemoryStorage {
       if (threadIdsToUpdate.size > 0) {
         queries.push(
           t.none(
-            `UPDATE ${getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) })} SET "updatedAt" = NOW(), "updatedAtZ" = NOW() WHERE id IN ($1:list)`,
+            `UPDATE ${this.operations.resolveTableName(TABLE_THREADS)} SET "updatedAt" = NOW(), "updatedAtZ" = NOW() WHERE id IN ($1:list)`,
             [Array.from(threadIdsToUpdate)],
           ),
         );
@@ -897,8 +897,8 @@ export class MemoryPG extends MemoryStorage {
     }
 
     try {
-      const messageTableName = getTableName({ indexName: TABLE_MESSAGES, schemaName: getSchemaName(this.schema) });
-      const threadTableName = getTableName({ indexName: TABLE_THREADS, schemaName: getSchemaName(this.schema) });
+      const messageTableName = this.operations.resolveTableName(TABLE_MESSAGES);
+      const threadTableName = this.operations.resolveTableName(TABLE_THREADS);
 
       await this.client.tx(async t => {
         // Get thread IDs for all messages
@@ -937,7 +937,7 @@ export class MemoryPG extends MemoryStorage {
   }
 
   async getResourceById({ resourceId }: { resourceId: string }): Promise<StorageResourceType | null> {
-    const tableName = getTableName({ indexName: TABLE_RESOURCES, schemaName: getSchemaName(this.schema) });
+    const tableName = this.operations.resolveTableName(TABLE_RESOURCES);
     const result = await this.client.oneOrNone<StorageResourceType & { createdAtZ: Date; updatedAtZ: Date }>(
       `SELECT * FROM ${tableName} WHERE id = $1`,
       [resourceId],
@@ -1001,7 +1001,7 @@ export class MemoryPG extends MemoryStorage {
       updatedAt: new Date(),
     };
 
-    const tableName = getTableName({ indexName: TABLE_RESOURCES, schemaName: getSchemaName(this.schema) });
+    const tableName = this.operations.resolveTableName(TABLE_RESOURCES);
 
     const updates: string[] = [];
     const values: any[] = [];

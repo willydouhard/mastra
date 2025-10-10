@@ -13,6 +13,19 @@ export function getTableName({ indexName, schemaName }: { indexName: string; sch
   return quotedSchemaName ? `${quotedSchemaName}.${quotedIndexName}` : quotedIndexName;
 }
 
+export function resolveTableName({
+  indexName,
+  schemaName,
+  tableMap,
+}: {
+  indexName: TABLE_NAMES;
+  schemaName?: string;
+  tableMap?: Partial<Record<TABLE_NAMES, string>>;
+}) {
+  const actualTableName = tableMap?.[indexName] || indexName;
+  return getTableName({ indexName: actualTableName, schemaName });
+}
+
 /**
  * Build date range filter for queries
  */
