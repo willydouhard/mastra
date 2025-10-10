@@ -1,15 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PostgresStore } from './index';
 import { TABLE_MESSAGES, TABLE_THREADS, TABLE_RESOURCES } from '@mastra/core/storage';
+import { TEST_CONFIG } from './test-utils';
 
 describe('PostgresStore tableMap', () => {
   let store: PostgresStore;
 
-  const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/mastra_test';
-
   beforeAll(async () => {
     store = new PostgresStore({
-      connectionString,
+      ...TEST_CONFIG,
       tableMap: {
         [TABLE_MESSAGES]: 'chat',
         [TABLE_THREADS]: 'conversation',
@@ -20,7 +19,9 @@ describe('PostgresStore tableMap', () => {
   });
 
   afterAll(async () => {
-    await store.close();
+    try {
+      await store.close();
+    } catch {}
   });
 
   it('should create tables with custom names', async () => {
@@ -38,12 +39,12 @@ describe('PostgresStore tableMap', () => {
 
   it('should resolve table names correctly', () => {
     const resolvedMessages = store.stores.operations.resolveTableName(TABLE_MESSAGES);
-    expect(resolvedMessages).toBe('"chat"');
+    expect(resolvedMessages).toBe('"public"."chat"');
 
     const resolvedThreads = store.stores.operations.resolveTableName(TABLE_THREADS);
-    expect(resolvedThreads).toBe('"conversation"');
+    expect(resolvedThreads).toBe('"public"."conversation"');
 
     const resolvedResources = store.stores.operations.resolveTableName(TABLE_RESOURCES);
-    expect(resolvedResources).toBe('"user"');
+    expect(resolvedResources).toBe('"public"."user"');
   });
 });
