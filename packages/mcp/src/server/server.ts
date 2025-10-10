@@ -1192,7 +1192,7 @@ export class MCPServer extends MCPServerBase {
     httpPath,
     req,
     res,
-    options = { sessionIdGenerator: () => randomUUID() },
+    options,
   }: {
     url: URL;
     httpPath: string;
@@ -1273,9 +1273,14 @@ export class MCPServer extends MCPServerBase {
             this.logger.debug('startHTTP: Received Streamable HTTP initialize request, creating new transport.');
 
             // Create a new transport for the new session
+            // Build transport options: use provided sessionIdGenerator (including undefined to disable sessions),
+            // or default to randomUUID if options not provided at all
+            const { onsessioninitialized: _, ...userOptions } = options || { sessionIdGenerator: () => randomUUID() };
+
+            // If options were provided but sessionIdGenerator is explicitly undefined, respect that
+            // If options were not provided, userOptions will have the default sessionIdGenerator
             transport = new StreamableHTTPServerTransport({
-              ...options,
-              sessionIdGenerator: () => randomUUID(),
+              ...userOptions,
               onsessioninitialized: id => {
                 this.streamableHTTPTransports.set(id, transport!);
               },
